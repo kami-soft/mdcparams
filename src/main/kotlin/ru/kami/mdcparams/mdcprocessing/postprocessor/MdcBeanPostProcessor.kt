@@ -8,10 +8,11 @@ import org.springframework.stereotype.Component
 import org.springframework.stereotype.Controller
 import ru.kami.mdcparams.mdcprocessing.annotations.MDCField
 import ru.kami.mdcparams.mdcprocessing.annotations.MDCWrapper
-import ru.kami.mdcparams.mdcprocessing.invocation.ArgumentsToMdcParamMapper
-import ru.kami.mdcparams.mdcprocessing.invocation.MdcData
-import ru.kami.mdcparams.mdcprocessing.invocation.MdcMethodInvocationInterceptor
-import ru.kami.mdcparams.mdcprocessing.invocation.MethodParamsToMDCDataMapper
+import ru.kami.mdcparams.mdcprocessing.invocation.*
+import ru.kami.mdcparams.mdcprocessing.invocation.mappers.impl.MethodArgToMdcFieldMapper
+import ru.kami.mdcparams.mdcprocessing.invocation.mappers.impl.MethodArgFieldToMdcFieldMapper
+import ru.kami.mdcparams.mdcprocessing.invocation.mappers.impl.MethodArgGetterToMdcFieldMapper
+import ru.kami.mdcparams.mdcprocessing.invocation.mappers.MdcFieldMapper
 import java.lang.reflect.AnnotatedElement
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -31,7 +32,7 @@ class MdcBeanPostProcessor : BeanPostProcessor {
         // бин точно кандидат на оборачивание в LogContext
         // пробегаемся по всем его методам, ищем аннотированные параметры
         // и аннотированные поля внутри параметров
-        // и если они есть - в мапу их для дальнейшего использования в оборачивании
+        // и если они есть - в мапу их для дальнейшего использования в оборачивании,
         // а если нет - возвращаем исходный бин
         val methodsMappers = parseMethods(bean)
         if (methodsMappers.isEmpty())
@@ -44,7 +45,7 @@ class MdcBeanPostProcessor : BeanPostProcessor {
         return aspectFactory.getProxy<Any>()
     }
 
-    private fun parseMethods(bean: Any): Map<String, MethodParamsToMDCDataMapper> {
+    private fun parseMethods(bean: Any): Map<String, MethodArgsToMDCDataMapper> {
         val beanClass = if (AopUtils.isAopProxy(bean)) {
             AopUtils.getTargetClass(bean)
         } else {
@@ -58,17 +59,25 @@ class MdcBeanPostProcessor : BeanPostProcessor {
             .associate { Pair(it.methodName, it.mapper) }
     }
 
-    private fun parseMethod(method: Method): MethodParseResult? {
-        val argumentMappers = method.parameters
+    internal fun parseMethod(method: Method): MethodParseResult? {
+        val argumentMapperGroups = method.parameters
             .flatMapIndexed { index, parameter -> parseParameter(index, parameter) }
+            .groupBy { it.getFieldName() }
+
+        argumentMapperGroups
+            .filter { it.value.size > 1 }
+            .forEach { println("in $method there are several MDC params with name ${it.key}. Will use only one") }
+
+        val argumentMappers = argumentMapperGroups
+            .map { it.value.first() }
 
         return if (argumentMappers.isNotEmpty())
-            MethodParseResult(method.name, MethodParamsToMDCDataMapper(argumentMappers))
+            MethodParseResult(method.name, MethodArgsToMDCDataMapper(argumentMappers))
         else
             null
     }
 
-    private fun parseParameter(parameterIndex: Int, parameter: Parameter): Collection<ArgumentsToMdcParamMapper> {
+    internal fun parseParameter(parameterIndex: Int, parameter: Parameter): Collection<MdcFieldMapper> {
         // Параметр может быть как простым типом, так и объектом.
         // Внутри объекта может быть несколько полей, помеченных разными MDC-аннотациями, надо смаппить все
         val parameterMapper = mapAnnotatedParameter(parameterIndex, parameter)
@@ -81,7 +90,7 @@ class MdcBeanPostProcessor : BeanPostProcessor {
 
         val gettersInParameterMappers = parameterType
             .methods
-            .filter { method -> method.parameterCount == 0 }
+            .filter { method -> method.parameterCount == 0 && method.returnType != Void.TYPE }
             .mapNotNull { method -> mapAnnotatedGetter(parameterIndex, method) }
 
         return if (parameterMapper != null)
@@ -90,43 +99,35 @@ class MdcBeanPostProcessor : BeanPostProcessor {
             fieldsInParameterMappers.plus(gettersInParameterMappers)
     }
 
-    private fun mapAnnotatedGetter(parameterIndex: Int, getter: Method): ArgumentsToMdcParamMapper? {
-        return constructArgumentMapper(parameterIndex, getter) {
-            getter.invoke(it)
+    private fun mapAnnotatedGetter(parameterIndex: Int, getter: Method): MdcFieldMapper? {
+        return constructArgumentMapper(parameterIndex, getter) { paramName, argumentIndex ->
+            MethodArgGetterToMdcFieldMapper(paramName, argumentIndex, getter)
         }
     }
 
-    private fun mapAnnotatedParameter(parameterIndex: Int, parameter: Parameter): ArgumentsToMdcParamMapper? {
-        return constructArgumentMapper(parameterIndex, parameter) { arg -> arg }
+    private fun mapAnnotatedParameter(parameterIndex: Int, parameter: Parameter): MdcFieldMapper? {
+        return constructArgumentMapper(parameterIndex, parameter) { paramName, argumentIndex ->
+            MethodArgToMdcFieldMapper(paramName, argumentIndex)
+        }
     }
 
-    private fun mapAnnotatedParameterField(parameterIndex: Int, field: Field): ArgumentsToMdcParamMapper? {
-        return constructArgumentMapper(parameterIndex, field) { arg -> field.get(arg) }
+    private fun mapAnnotatedParameterField(parameterIndex: Int, field: Field): MdcFieldMapper? {
+        return constructArgumentMapper(parameterIndex, field) { paramName, argumentIndex ->
+            MethodArgFieldToMdcFieldMapper(paramName, argumentIndex, field)
+        }
     }
 
     private fun constructArgumentMapper(
         parameterIndex: Int,
         element: AnnotatedElement,
-        block: (Any) -> Any?
-    ): ArgumentsToMdcParamMapper? {
+        mapperConstructor: (paramName: String, argumentIndex: Int) -> MdcFieldMapper?
+    ): MdcFieldMapper? {
         val annotation = AnnotationUtils.findAnnotation(element, MDCField::class.java)
-        if (annotation != null) {
-            val mdcFieldName = annotation.mdcFieldName
-            return ArgumentsToMdcParamMapper { args ->
-                var result: MdcData? = null
-                if (!args.isNullOrEmpty() && args.size > parameterIndex) {
-                    val arg = args[parameterIndex]
-                    if (arg != null) {
-                        val value = block(arg)
-                        if (value != null) {
-                            result = MdcData(mdcFieldName, value)
-                        }
-                    }
-                }
-                result
-            }
+        return if (annotation != null) {
+            mapperConstructor(annotation.mdcFieldName, parameterIndex)
+        } else {
+            null
         }
-        return null
     }
 
 
@@ -142,7 +143,7 @@ class MdcBeanPostProcessor : BeanPostProcessor {
     }
 }
 
-private data class MethodParseResult(
+internal data class MethodParseResult(
     val methodName: String,
-    val mapper: MethodParamsToMDCDataMapper,
+    val mapper: MethodArgsToMDCDataMapper,
 )

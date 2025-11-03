@@ -18,4 +18,8 @@ data class Sample(
     val id: Int,
     @get:MDCField("someField")
     val data: String,
-)
+) {
+    fun bar(): Unit {
+
+    }
+}

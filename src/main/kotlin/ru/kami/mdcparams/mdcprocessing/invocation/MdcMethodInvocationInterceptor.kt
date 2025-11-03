@@ -4,14 +4,14 @@ import org.aopalliance.intercept.MethodInterceptor
 import org.aopalliance.intercept.MethodInvocation
 
 class MdcMethodInvocationInterceptor(
-    private val proxiedMethodsData: Map<String, MethodParamsToMDCDataMapper>,
+    private val proxiedMethodsData: Map<String, MethodArgsToMDCDataMapper>,
 ) : MethodInterceptor {
 
     override fun invoke(invocation: MethodInvocation): Any? {
-        val paramsMapper = proxiedMethodsData[invocation.method.name]
-        return if (paramsMapper != null) {
-            val mdcParameterValues = paramsMapper.argsToMdcDataCollection(invocation.arguments)
-            println(mdcParameterValues)
+        val argsMapper = proxiedMethodsData[invocation.method.name]
+        return if (argsMapper != null) {
+            val mdcFieldsData = argsMapper.argsToMdcDataCollection(invocation.arguments)
+            println(mdcFieldsData)
             invocation.proceed()
         } else {
             invocation.proceed()

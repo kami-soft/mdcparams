@@ -3,7 +3,7 @@ package ru.kami.mdcparams.mdcprocessing.invocation.mappers.impl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
-class ArgumentToMdcParamMapperTest {
+class MethodArgToMdcFieldMapperTest {
     @Test
     fun `should get right value`() {
         val mapper = MethodArgToMdcFieldMapper("paramName", 1)
@@ -16,10 +16,10 @@ class ArgumentToMdcParamMapperTest {
         assertEquals(1L, mapper.getValue(arrayOf(2, 1L, 3)))
         assertEquals(TestEnum.FOOBAR, mapper.getValue(arrayOf<Any?>("param0", TestEnum.FOOBAR, 4345)))
     }
-}
 
-private enum class TestEnum {
-    FOO,
-    BAR,
-    FOOBAR,
+    private enum class TestEnum {
+        FOO,
+        BAR,
+        FOOBAR,
+    }
 }

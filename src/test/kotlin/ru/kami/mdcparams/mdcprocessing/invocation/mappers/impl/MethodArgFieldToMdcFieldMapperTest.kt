@@ -3,7 +3,7 @@ package ru.kami.mdcparams.mdcprocessing.invocation.mappers.impl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
-class FieldToMdcParamMapperTest {
+class MethodArgFieldToMdcFieldMapperTest {
     @Test
     fun `should get right value`() {
         val field = TestFieldsClass::class.java
@@ -18,11 +18,11 @@ class FieldToMdcParamMapperTest {
 
         assertEquals(testFields.entityId, mapper.getValue(arrayOf(testFields)))
     }
-}
 
-open class TestFieldsClass(
-    initialValue: String?
-) {
-    open var entityId: String? = initialValue
-    var bar: Long? = null
+    class TestFieldsClass(
+        initialValue: String?
+    ) {
+        var entityId: String? = initialValue
+        var bar: Long? = null
+    }
 }
